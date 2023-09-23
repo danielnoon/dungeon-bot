@@ -55,7 +55,14 @@ export interface Database {
           name?: string
           spd?: number
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "creatures_guild_fkey"
+            columns: ["guild"]
+            referencedRelation: "guild"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       guild: {
         Row: {
@@ -74,6 +81,40 @@ export interface Database {
           id?: string
         }
         Relationships: []
+      }
+      players: {
+        Row: {
+          created_at: string
+          guild: string
+          id: number
+          name: string
+          portrait: string | null
+          user: string
+        }
+        Insert: {
+          created_at?: string
+          guild: string
+          id?: number
+          name: string
+          portrait?: string | null
+          user: string
+        }
+        Update: {
+          created_at?: string
+          guild?: string
+          id?: number
+          name?: string
+          portrait?: string | null
+          user?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "players_guild_fkey"
+            columns: ["guild"]
+            referencedRelation: "guild"
+            referencedColumns: ["id"]
+          }
+        ]
       }
     }
     Views: {

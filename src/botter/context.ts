@@ -33,6 +33,7 @@ export function makeSlashCommandContext(inter: CommandInteraction) {
     commandType: inter.commandType,
     guild: from(inter.guild),
     guildId: from(inter.guildId),
+    user: inter.user,
     options: {
       get,
       getString,

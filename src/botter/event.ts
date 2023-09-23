@@ -2,6 +2,7 @@ import { Awaitable, SlashCommandBuilder } from "discord.js";
 import { Type, make, make_is, select } from "../fp/Type";
 import { Reply } from "./reply";
 import { makeSlashCommandContext } from "./context";
+import { Action } from "./action";
 
 // MessageContentEvent
 const _message_content_event = Symbol("MessageContentEvent");
@@ -16,7 +17,7 @@ export const MessageContentEvent_ = select(_message_content_event);
 // CommandEvent
 export type CommandEventHandler = (
   ctx: ReturnType<typeof makeSlashCommandContext>
-) => Awaitable<Reply>;
+) => Awaitable<Reply | Action>;
 
 const _command_event = Symbol("CommandEvent");
 export const CommandEvent = (

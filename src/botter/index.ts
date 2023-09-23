@@ -1,6 +1,27 @@
-import { from, fromSome, isNone, isSome, map, maybe } from "../fp/Option";
+import {
+  None,
+  None_,
+  Option,
+  Some,
+  Some_,
+  from,
+  fromSome,
+  isNone,
+  isSome,
+  map,
+  maybe,
+} from "../fp/Option";
 import { Config } from "./config";
-import { Client, Events, REST, Routes, CommandInteraction } from "discord.js";
+import {
+  Client,
+  Events,
+  REST,
+  Routes,
+  CommandInteraction,
+  InteractionResponse,
+  BaseInteraction,
+  ButtonInteraction,
+} from "discord.js";
 import {
   CommandEvent,
   CommandEventHandler,
@@ -9,14 +30,17 @@ import {
 } from "./event";
 import { match } from "ts-pattern";
 import { makeSlashCommandContext } from "./context";
-import { Reply } from "./reply";
+import { Reply, isReply } from "./reply";
 import {
   Action,
   ActionGroup,
   isAction,
   isActionGroup,
+  isAwaitComponentAction,
   isDeferAction,
   isMessageReplyAction,
+  isRichMessageReplyAction,
+  isShowModalAction,
 } from "./action";
 
 const Handlers = () =>
@@ -26,6 +50,8 @@ const Handlers = () =>
 
 const State = () => ({
   replied: false,
+  lastReply: None() as Option<InteractionResponse>,
+  lastInteraction: None() as Option<BaseInteraction>,
 });
 
 async function runCommandAction(
@@ -39,20 +65,25 @@ async function runCommandAction(
         if (state.replied) {
           await inter.editReply({ content });
         } else {
-          await inter.reply({ content });
+          state.lastReply = Some(await inter.reply({ content }));
+          state.replied = true;
         }
       })
       .when(isDeferAction, async ({ data: [message, ephemeral, fn] }) => {
-        await match(message)
-          .when(isSome<string>, ({ data: content }) =>
+        const reply = await match(message)
+          .when(isSome<string>, async ({ data: content }) =>
             inter.reply({ content, ephemeral })
           )
           .otherwise(() => inter.deferReply({ ephemeral }));
 
+        state.lastReply = Some(reply);
+
+        state.replied = true;
+
         const result = await fn();
 
         if (isAction(result) || isActionGroup(result)) {
-          return runCommandAction(inter, result, { ...state, replied: true });
+          return runCommandAction(inter, result, state);
         }
       })
       .when(isActionGroup, async ({ data }) => {
@@ -60,10 +91,64 @@ async function runCommandAction(
           runCommandAction(inter, action, state);
         }
       })
+      .when(isRichMessageReplyAction, async ({ data }) => {
+        if (state.replied) {
+          await inter.editReply(data);
+        } else {
+          state.lastReply = Some(await inter.reply(data));
+          state.replied = true;
+        }
+      })
+      .when(isAwaitComponentAction, async ({ data }) => {
+        const [filter, timeout, errorMessage, handler] = data;
+
+        match(state.lastReply)
+          .with(None_, () =>
+            inter.editReply("Error. Please contact bot administrator.")
+          )
+          .with(Some_, async (reply) => {
+            try {
+              const confirmation = await reply.awaitMessageComponent({
+                filter,
+                time: timeout,
+              });
+
+              state.lastInteraction = Some(confirmation);
+
+              const action = await handler(confirmation as any);
+
+              runCommandAction(inter, action, state);
+            } catch {
+              await reply.edit(errorMessage);
+            }
+          });
+      })
+      .when(isShowModalAction, async ({ data: [modal, callback] }) => {
+        await match(state.lastInteraction)
+          .with(None_, () => inter.editReply("Logic error. Contact developer."))
+          .with(Some_, async (inter) => {
+            if (inter.isMessageComponent()) {
+              if (!modal.data.custom_id) throw new Error();
+              await inter.showModal(modal);
+              const newInter = await inter.awaitModalSubmit({
+                filter: (i) => i.customId === modal.data.custom_id,
+                time: 60_000 * 60,
+              });
+
+              state.lastInteraction = Some(newInter);
+
+              const result = await callback(newInter);
+
+              await newInter.deferReply();
+
+              runCommandAction(newInter as any, result, state);
+            }
+          });
+      })
       .exhaustive();
   } catch (err) {
     console.trace(err);
-    if (inter.replied) {
+    if (state.replied) {
       inter.editReply("Critical server error.");
     } else {
       inter.reply("Critical server error");
@@ -98,6 +183,7 @@ export function start(config: Config) {
 
   client.on(Events.InteractionCreate, async (inter) => {
     const state = State();
+    state.lastInteraction = Some(inter);
 
     if (inter.isCommand()) {
       const name = inter.commandName;
@@ -107,8 +193,12 @@ export function start(config: Config) {
 
       const response = await maybe(Reply(), (fn) => fn(ctx), handler);
 
-      for (const action of response.data) {
-        await runCommandAction(inter, action, state);
+      if (isReply(response)) {
+        for (const action of response.data) {
+          await runCommandAction(inter, action, state);
+        }
+      } else {
+        await runCommandAction(inter, response, state);
       }
     }
   });
